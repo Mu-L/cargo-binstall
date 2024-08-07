@@ -2,6 +2,7 @@ use std::{
     env, fs,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 
 use binstalk::{
@@ -36,6 +37,7 @@ use crate::{args::Args, gh_token, git_credentials, install_path, ui::confirm};
 
 pub fn install_crates(
     args: Args,
+    cli_overrides: PkgOverride,
     jobserver_client: LazyJobserverClient,
 ) -> Result<Option<AutoAbortJoinHandle<Result<()>>>> {
     // Compute Resolvers
@@ -79,15 +81,6 @@ pub fn install_crates(
 
     // Launch target detection
     let desired_targets = get_desired_targets(args.targets);
-
-    // Computer cli_overrides
-    let cli_overrides = PkgOverride {
-        pkg_url: args.pkg_url,
-        pkg_fmt: args.pkg_fmt,
-        bin_dir: args.bin_dir,
-        disabled_strategies: None,
-        signing: None,
-    };
 
     // Initialize reqwest client
     let rate_limit = args.rate_limit;
@@ -208,6 +201,10 @@ pub fn install_crates(
             SignaturePolicy::IfPresent
         },
         disable_telemetry: args.disable_telemetry,
+
+        maximum_resolution_timeout: Duration::from_secs(
+            args.maximum_resolution_timeout.get().into(),
+        ),
     });
 
     // Destruct args before any async function to reduce size of the future

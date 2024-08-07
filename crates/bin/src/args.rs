@@ -1,7 +1,7 @@
 use std::{
     env,
     ffi::OsString,
-    fmt,
+    fmt, mem,
     num::{NonZeroU16, NonZeroU64, ParseIntError},
     path::PathBuf,
     str::FromStr,
@@ -13,7 +13,7 @@ use binstalk::{
     ops::resolve::{CrateName, VersionReqExt},
     registry::Registry,
 };
-use binstalk_manifests::cargo_toml_binstall::Strategy;
+use binstalk_manifests::cargo_toml_binstall::{PkgOverride, Strategy};
 use clap::{builder::PossibleValue, error::ErrorKind, CommandFactory, Parser, ValueEnum};
 use compact_str::CompactString;
 use log::LevelFilter;
@@ -155,6 +155,10 @@ pub struct Args {
     /// Specify the strategies to be used,
     /// binstall will run the strategies specified in order.
     ///
+    /// If this option is specified, then cargo-binstall will ignore
+    /// `disabled-strategies` in `package.metadata` in the cargo manifest
+    /// of the installed packages.
+    ///
     /// Default value is "crate-meta-data,quick-install,compile".
     #[clap(
         help_heading = "Overrides",
@@ -167,6 +171,10 @@ pub struct Args {
     /// Disable the strategies specified.
     /// If a strategy is specified in `--strategies` and `--disable-strategies`,
     /// then it will be removed.
+    ///
+    /// If `--strategies` is not specified, then the strategies specified in this
+    /// option will be merged with the  disabled-strategies` in `package.metadata`
+    /// in the cargo manifest of the installed packages.
     #[clap(
         help_heading = "Overrides",
         long,
@@ -186,6 +194,15 @@ pub struct Args {
         env = "BINSTALL_NO_DISCOVER_GITHUB_TOKEN"
     )]
     pub(crate) no_discover_github_token: bool,
+
+    /// Maximum time each resolution (one for each possible target and each strategy), in seconds.
+    #[clap(
+        help_heading = "Overrides",
+        long,
+        env = "BINSTALL_MAXIMUM_RESOLUTION_TIMEOUT",
+        default_value_t = NonZeroU16::new(180).unwrap(),
+    )]
+    pub(crate) maximum_resolution_timeout: NonZeroU16,
 
     /// This flag is now enabled by default thus a no-op.
     ///
@@ -464,7 +481,7 @@ impl ValueEnum for StrategyWrapped {
     }
 }
 
-pub fn parse() -> Args {
+pub fn parse() -> (Args, PkgOverride) {
     // Filter extraneous arg when invoked by cargo
     // `cargo run -- --help` gives ["target/debug/cargo-binstall", "--help"]
     // `cargo binstall --help` gives ["/home/ryan/.cargo/bin/cargo-binstall", "binstall", "--help"]
@@ -561,6 +578,8 @@ You cannot use --{option} and specify multiple packages at the same time. Do one
         }
     }
 
+    let ignore_disabled_strategies = !opts.strategies.is_empty();
+
     // Default strategies if empty
     if opts.strategies.is_empty() {
         opts.strategies = vec![
@@ -588,9 +607,6 @@ You cannot use --{option} and specify multiple packages at the same time. Do one
                 .error(ErrorKind::TooFewValues, "You have disabled all strategies")
                 .exit()
         }
-
-        // Free disable_strategies as it will not be used again.
-        opts.disable_strategies = Vec::new();
     }
 
     // Ensure that Strategy::Compile is specified as the last strategy
@@ -614,7 +630,22 @@ You cannot use --{option} and specify multiple packages at the same time. Do one
         _ => (),
     }
 
-    opts
+    let cli_overrides = PkgOverride {
+        pkg_url: opts.pkg_url.take(),
+        pkg_fmt: opts.pkg_fmt.take(),
+        bin_dir: opts.bin_dir.take(),
+        disabled_strategies: Some(
+            mem::take(&mut opts.disable_strategies)
+                .into_iter()
+                .map(|strategy| strategy.0)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        ),
+        ignore_disabled_strategies,
+        signing: None,
+    };
+
+    (opts, cli_overrides)
 }
 
 #[cfg(test)]

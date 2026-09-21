@@ -349,6 +349,21 @@ pub struct Args {
     #[clap(help_heading = "Options", long)]
     pub(crate) locked: bool,
 
+    /// Activate the specified features when installing from source.
+    ///
+    /// This mirrors the equivalent argument in `cargo install --features`.
+    ///
+    /// This only takes effect when falling back to `cargo install`; prebuilt binaries are
+    /// unaffected, since they are built ahead of time with a fixed set of features.
+    #[clap(
+        help_heading = "Options",
+        long,
+        value_name = "FEATURES",
+        num_args = 1..,
+        action = clap::ArgAction::Append
+    )]
+    pub(crate) features: Option<Vec<CompactString>>,
+
     /// Deprecated, here for back-compat only. Secure is now on by default.
     #[clap(hide(true), long)]
     pub(crate) secure: bool,
@@ -637,6 +652,22 @@ pub fn parse() -> (Args, PkgOverride) {
                     format_args!(
                         r#"override option used with multi package syntax.
 You cannot use --{option} and specify multiple packages at the same time. Do one or the other."#
+                    ),
+                )
+                .exit();
+        }
+
+        if opts
+            .features
+            .as_ref()
+            .is_some_and(|features| !features.is_empty())
+        {
+            command
+                .error(
+                    ErrorKind::ArgumentConflict,
+                    format_args!(
+                        r#"--features option used with multi package syntax.
+You cannot use --features and specify multiple packages at the same time. Do one or the other."#
                     ),
                 )
                 .exit();
